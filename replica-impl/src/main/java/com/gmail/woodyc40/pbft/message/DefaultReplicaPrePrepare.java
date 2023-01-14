@@ -1,5 +1,7 @@
 package com.gmail.woodyc40.pbft.message;
 
+import java.util.Arrays;
+
 public class DefaultReplicaPrePrepare<O> implements ReplicaPrePrepare<O> {
     private final int viewNumber;
     private final long seqNumber;
@@ -31,5 +33,15 @@ public class DefaultReplicaPrePrepare<O> implements ReplicaPrePrepare<O> {
     @Override
     public ReplicaRequest<O> request() {
         return this.request;
+    }
+
+    @Override
+    public String toString() {
+        return "DRPrePrepare{" +
+                "viewNumber=" + viewNumber +
+                ", seqNumber=" + seqNumber +
+                ", digest=" + Arrays.toString(digest) +
+                ", request=" + request +
+                '}';
     }
 }

@@ -1,0 +1,14 @@
+.idea/
+*.iml
+*.class
+replica-impl/*
+replica-spec/*
+
+example/target/*
+client-spec/target/*
+client-impl/target/*
+bft-test/target/*
+
+out*
+result*
+

@@ -1,6 +1,7 @@
 package com.gmail.woodyc40.pbft.client;
 
 import com.gmail.woodyc40.pbft.ClientTransport;
+import edu.tudelft.serg.TestConf;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 
@@ -31,7 +32,7 @@ public class AdditionClientTransport implements ClientTransport<String> {
 
     @Override
     public void sendRequest(int replicaId, String request) {
-        System.out.println(String.format("SEND: CLIENT -> %d: %s", replicaId, request));
+        // System.out.println(String.format("SEND: CLIENT -> %d: %s", replicaId, request));
 
         String channel = toChannel(replicaId);
         try (Jedis jedis = this.pool.getResource()) {

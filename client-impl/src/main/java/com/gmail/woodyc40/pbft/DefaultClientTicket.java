@@ -46,7 +46,8 @@ public class DefaultClientTicket<O, R> implements ClientTicket<O, R> {
     public void recvResult(int replicaId, R result, int tolerance) {
         this.replies.put(replicaId, result);
 
-        int quorum = tolerance + 1;
+        // "The read-only optimization preserves linearizability provided clients obtain 2f + 1 matching replies 
+        int quorum = 2 * tolerance + 1;
         Map<R, Integer> freqMap = new HashMap<>();
         for (R value : this.replies.values()) {
             int freq = freqMap.compute(value, (k, v) -> v == null ? 1 : v + 1);

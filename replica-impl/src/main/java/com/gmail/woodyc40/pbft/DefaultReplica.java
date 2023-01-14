@@ -1,6 +1,7 @@
 package com.gmail.woodyc40.pbft;
 
 import com.gmail.woodyc40.pbft.message.*;
+import edu.tudelft.serg.PropertyChecker;
 import org.checkerframework.checker.nullness.qual.Nullable;
 
 import java.util.Arrays;
@@ -452,6 +453,12 @@ public abstract class DefaultReplica<O, R, T> implements Replica<O, R, T> {
                         this.replicaId);
                 this.sendCommit(commit);
 
+                // For debugging - Replica is in prepared
+                /*System.out.println("LOG-Replica-Prepare:" + replicaId +
+                        "\tviewNo: " + ticket.viewNumber() +
+                        "\tseqNo: " + ticket.seqNumber() +
+                        "\trequest: " + ticket.request());*/
+
                 // PBFT 4.2 - Add own commit to the log
                 ticket.append(commit);
             }
@@ -491,6 +498,15 @@ public abstract class DefaultReplica<O, R, T> implements Replica<O, R, T> {
                     ReplicaRequestKey key = new DefaultReplicaRequestKey(clientId, timestamp);
                     this.log.completeTicket(key, currentViewNumber, seqNumber);
                     this.sendReply(clientId, reply);
+
+                    // Instrumentation for checking properties - Replica committed
+                    PropertyChecker.getInstance().addCommit(replicaId, ticket);
+
+                    /*
+                    System.out.println("LOG-Replica-Commit:" + replicaId +
+                            " \tviewNo: " + ticket.viewNumber() +
+                            " \tseqNo: " + ticket.seqNumber() +
+                            " \trequest: " + ticket.request());*/
 
                     this.timeouts.remove(key);
                 }
@@ -726,7 +742,7 @@ public abstract class DefaultReplica<O, R, T> implements Replica<O, R, T> {
         return this.transport;
     }
 
-    private static int getPrimaryId(int viewNumber, int knownReplicas) {
+    public static int getPrimaryId(int viewNumber, int knownReplicas) {
         return viewNumber % knownReplicas;
     }
 

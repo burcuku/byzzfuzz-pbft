@@ -51,7 +51,7 @@ public class AdditionReplica extends DefaultReplica<AdditionOperation, AdditionR
         return new DefaultReplicaRequest<>(additionOperation, timestamp, clientId);
     }
 
-    private static ReplicaPrePrepare<AdditionOperation> readPrePrepare(JsonObject root) {
+    public static ReplicaPrePrepare<AdditionOperation> readPrePrepare(JsonObject root) {
         int viewNumber = root.get("view-number").getAsInt();
         long seqNumber = root.get("seq-number").getAsLong();
         byte[] digest = root.get("digest").getAsString().getBytes(StandardCharsets.UTF_8);
@@ -64,7 +64,7 @@ public class AdditionReplica extends DefaultReplica<AdditionOperation, AdditionR
                 request);
     }
 
-    private static ReplicaPrepare readPrepare(JsonObject root) {
+    public static ReplicaPrepare readPrepare(JsonObject root) {
         int viewNumber = root.get("view-number").getAsInt();
         long seqNumber = root.get("seq-number").getAsLong();
         byte[] digest = root.get("digest").getAsString().getBytes(StandardCharsets.UTF_8);
@@ -90,7 +90,7 @@ public class AdditionReplica extends DefaultReplica<AdditionOperation, AdditionR
                 replicaId);
     }
 
-    private static ReplicaCheckpoint readCheckpoint(JsonObject root) {
+    public static ReplicaCheckpoint readCheckpoint(JsonObject root) {
         long lastSeqNumber = root.get("last-seq-number").getAsLong();
         byte[] digest = root.get("digest").getAsString().getBytes(StandardCharsets.UTF_8);
         int replicaId = root.get("replica-id").getAsInt();
@@ -101,7 +101,7 @@ public class AdditionReplica extends DefaultReplica<AdditionOperation, AdditionR
                 replicaId);
     }
 
-    private static ReplicaViewChange readViewChange(JsonObject root) {
+    public static ReplicaViewChange readViewChange(JsonObject root) {
         int newViewNumber = root.get("new-view-number").getAsInt();
         long lastSeqNumber = root.get("last-seq-number").getAsLong();
 

@@ -1,5 +1,7 @@
 package com.gmail.woodyc40.pbft.message;
 
+import java.util.Arrays;
+
 public class DefaultReplicaCommit implements ReplicaCommit {
     private final int viewNumber;
     private final long seqNumber;
@@ -31,5 +33,15 @@ public class DefaultReplicaCommit implements ReplicaCommit {
     @Override
     public int replicaId() {
         return this.replicaId;
+    }
+
+    @Override
+    public String toString() {
+        return "DRCommit{" +
+                "viewNumber=" + viewNumber +
+                ", seqNumber=" + seqNumber +
+                ", digest=" + Arrays.toString(digest) +
+                ", replicaId=" + replicaId +
+                '}';
     }
 }

@@ -1,497 +1,228 @@
-# `pbft-java`
+# Randomized testing for checking Byzantine fault-tolerance of `pbft-java`
 
-A Practical Byzantine Fault Tolerance (PBFT) emulator built in Java.
+This repository contains the implementation of Byzzfuzz testing algorithm for testing the implementation of Practical Byzantine Fault Tolerance (PBFT) emulator built in Java. 
 
-# Implementation
+You can access the repository for the PBFT implementation under test [here](https://github.com/caojohnny/pbft-java).
 
-For the most part, the implementation of the PBFT protocol
-attempts to follow the original document as closely as
-possible. However, there are many places where I am simply
-too stupid to comprehend what is going on in the protocol,
-and there may be a few deviations from the standard.
+Our tester implementation intercepts the exchanged messages in the system using [TesterTransport](example/src/main/java/edu/tudelft/serg/TesterTransport.java) and injects network and Byzantine process faults using [FaultInjector](example/src/main/java/edu/tudelft/serg/FaultInjector.java).
 
-In the default implementations, clients are allowed to send
-asynchronous requests. Clients implement a ticketing system
-whereby requests are assigned a ticket and placed into an
-internal table, which will allow lookups based on the
-timestamp of the original request. Because requests may be
-sent quickly, timestamps begin at 0 and count up instead of
-using the system clock for simplicity. Clients check on the
-reply status of a ticket in an infinite loop, as long as
-timeouts continue to occur, clients will continue to
-multicast the same request to all replicas. Clients accept
-a quorum of `f + 1` replies, and future replies from the
-remaining nodes are ignored.
 
-In the default implementations, replicas are allowed to
-handle asynchronous requests. The message logging style
-also uses a ticketing system, whereby operations that
-are pending are identified by view number and the assigned
-sequence number. Tickets are phased rather than the entire
-replica. All messages received as well as sent are added to
-the respective ticket. Replicas check for prepared state as
-well as committed-local state each time a phase-pertinent
-message is sent (`PRE-PREPARE`, `PREPARE`, or `COMMIT`),
-and thus these messages are allowed to arrive out-of-order.
-Replicas execute all requested operations synchronously.
-Replicas are allowed to send a `PREPARE` or `COMMIT`
-message only once to cut down on traffic. Cryptography,
-such as digesting, MACs, and message signing are not
-specified, and implementors are allowed to not verify those
-if desired. Replicas become prepared as soon as the
-`2f`th matching `PREPARE` message arrives, and become 
-committed-local as soon as the `2f + 1`th matching 
-`COMMIT` arrives. Because these conditions only occur once,
-future phase messages are ignored if the condition they are
-changing are already true.
+## Building and running the PBFT cluster: 
 
-# Building
+To run the system, first start the redis-server that is used by the PBFT processes. You can download and run the redis server using [redis github repository](https://github.com/redis/redis). We tested the system using redis version 6.2.1.
+
 
 ``` shell
-git clone https://github.com/AgentTroll/pbft-java.git
-cd pbft-java
+cd /path/to/redis/server/src
+./redis-server
+```
+
+After you started the redis server, you can build and run the system using the command below:
+
+``` shell
+cd /path/to/pbft-java/
 mvn clean install
+java -cp example/target/pbft-java-example-jar-with-dependencies.jar com.gmail.woodyc40.pbft.Main
 ```
 
-# Usage
+This starts a test execution with a cluster of processes running the PBFT protocol and it submits two client requests to be executed by the cluster.  The current configuration runs a test with a randomly generated configuration. 
 
-The majority of *response* logic has been implemented by
-the `Default*` implementation modules. This means that
-given input, the default implementations handles the
-response to those inputs. The user does need  to implement
-a few components in order to correctly use the provided
-implementations.
+You can use `test.conf` to configure the test parameters (the number of protocol rounds with network faults, the number of protocol rounds with process faults, the number of rounds among which to inject faults) and test options (e.g., the random seed to reproduce a test execution, the timeout for processing a client request, the timeout for bounded liveness detection, etc).
 
-Sample implementations for the required components can
-be found the `pbft-java-example` module.
+Alternatively, you can execute a test execution from a given fault configuration providing the json string for the fault configuration (see the example fault configurations in [TesterTransport.java](example/src/main/java/edu/tudelft/serg/TesterTransport.java)). 
 
-#### Clients
 
-- Clients need to implement their own `ClientEncoder` to
-transform the messages into a transmissible format
-    - Encoders handle message signing and MACs
-- Clients also need to implement the `ClientTransport` in
-order for the `Client` to send messages
-- Clients need to implement their own incoming message
-handlers that both decode the message and decide which
-hooks to call - the required hook is 
-`Client#recvReply(...)`
-- Client users should call `Client#checkTimeout(...)` in
-a loop after sending requests in order to ensure liveness
-- Operations implemented by the client should implement
-`equals` and `hashCode`
+## Example test executions:
 
-#### Replicas
+We use Byzfuzz to test the example PBFT application provided by the [implementation under test](https://github.com/caojohnny/pbft-java). The example runs a cluster of four processes (with process ids 0, 1, 2, 3) that serve client requests for some arithmetic operations. We submit two client operations (to process `operation=AddOp{first=1, second=1}` and `operation=AddOp{first=2, second=2}`) to the system. The cluster runs PBFT to agree on their logs of issued client operations.
 
-- Replicas need to implement their own `ReplicaEncoder` to
-transform the messages into a transmissible format
-    - Encoders handle message signing and MACs
-    - The **default** implementation requires that full
-    messages and checkpoints are encoded for those messages
-    pertaining to view changes, but this can be changed if
-    the user wishes to accommodate for additional messages
-    to retrieve missing information
-- Replicas need to implement `ReplicaTransport` in order
-for the `Replica` to send messages
-- Replicas need to implement their own incoming message
-handlers that both decode and decide which hooks to call -
-the required hooks are:
-  - `#recvRequest(...)`
-  - `#recvPrePrepare(...)`
-  - `#recvPrepare(...)`
-  - `#recvCommit(...)`
-  - `#recvCheckpoint(...)`
-  - `#recvViewChange(...)`
-  - `#recvNewView(...)`
-- Replicas need to implement their own `Digesters` if
-needed
-- Replicas need to call `#checkTimeout(...)` in a loop to
-ensure that client timeouts cause view changes as needed
 
-# Demo
+Given the number of rounds with network faults (`d`), the number of rounds with process faults (`c`), and the number of rounds (`r`) to distribute the faults as test parameters, Byzzfuzz randomly generates a test execution that injects `d` random network and `c` random process faults into the execution. Alternatively, it can enforce the execution of a given fault configuration of which faults in inject in which rounds. 
 
-A primitive implementation of the PBFT protocol using Redis to
-communicate between replicas using JSON serialization to demonstrate
-addition operations sent to the replica state machines and retrieve
-a result even with 1 faulty node. The source for the implementation
-can be found in the `pbft-java-example` module.
+Here we provide two example test executions one of which randomly generates a test execution using the test parameters, and another one injects faults from a given fault configuration.
 
-Here is the output:
+### Running a randomly generated test execution for a given set of test parameters:
+
+To run a randomly generated test execution, initialize the fault injector in the `TesterTransport` using the configuration read from `test.conf`. See line 37 in [TesterTransport.java](example/src/main/java/edu/tudelft/serg/TesterTransport.java):
 
 ```
-SEND: CLIENT -> 0: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: CLIENT -> 0: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: CLIENT -> 0: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: CLIENT -> 0: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: CLIENT -> 1: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: CLIENT -> 2: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: CLIENT -> 3: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: CLIENT -> 0: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: CLIENT -> 1: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: CLIENT -> 2: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: CLIENT -> 3: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: CLIENT -> 0: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: CLIENT -> 1: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: CLIENT -> 2: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: CLIENT -> 3: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: CLIENT -> 0: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: CLIENT -> 1: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: CLIENT -> 2: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: CLIENT -> 3: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: CLIENT -> 0: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: CLIENT -> 1: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: CLIENT -> 2: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: CLIENT -> 3: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: CLIENT -> 0: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: CLIENT -> 1: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: CLIENT -> 2: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: CLIENT -> 3: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 1: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 2: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 2: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}
-SEND: REPLICA -> 1: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 3: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 3: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 2: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}
-SEND: REPLICA -> 3: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 1: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 1: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 2: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 3: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 1: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 1: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 2: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}
-SEND: REPLICA -> 3: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 3: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}
-SEND: REPLICA -> 2: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 0: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}],"prepared-proofs":[]}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 2: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}],"prepared-proofs":[]}
-SEND: REPLICA -> 1: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 3: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}],"prepared-proofs":[]}
-SEND: REPLICA -> 3: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 1: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 2: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 1: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 3: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 0: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}],"prepared-proofs":[]}
-SEND: REPLICA -> 1: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 2: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}],"prepared-proofs":[]}
-SEND: REPLICA -> 2: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 3: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}],"prepared-proofs":[]}
-SEND: REPLICA -> 1: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 3: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 1: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 2: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 0: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}],"prepared-proofs":[]}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 1: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 1: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 2: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 3: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 0: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 1: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 1: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 2: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}
-SEND: REPLICA -> 3: {"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2}
-SEND: REPLICA -> 2: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}],"prepared-proofs":[]}
-SEND: REPLICA -> 3: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}],"prepared-proofs":[]}
-SEND: REPLICA -> 0: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}],"prepared-proofs":[]}
-SEND: REPLICA -> 2: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}],"prepared-proofs":[]}
-SEND: REPLICA -> 3: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}],"prepared-proofs":[]}
-SEND: REPLICA -> 0: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}],"prepared-proofs":[]}
-SEND: REPLICA -> 2: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}],"prepared-proofs":[]}
-SEND: REPLICA -> 3: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}],"prepared-proofs":[]}
-SEND: REPLICA -> 0: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}],"prepared-proofs":[]}
-SEND: REPLICA -> 2: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}],"prepared-proofs":[]}
-SEND: REPLICA -> 3: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}],"prepared-proofs":[]}
-SEND: REPLICA -> 0: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}],"prepared-proofs":[]}
-SEND: REPLICA -> 2: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}],"prepared-proofs":[]}
-SEND: REPLICA -> 3: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3}],"prepared-proofs":[]}
-SEND: REPLICA -> 0: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}],"prepared-proofs":[]}
-SEND: REPLICA -> 2: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}],"prepared-proofs":[]}
-SEND: REPLICA -> 3: {"type":"NEW-VIEW","new-view-number":1,"view-change-proofs":[{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":2},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":3},{"type":"VIEW-CHANGE","new-view-number":1,"last-seq-number":0,"checkpoint-proofs":[],"prepared-proofs":[],"replica-id":1}],"prepared-proofs":[]}
-SEND: CLIENT -> 0: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: CLIENT -> 1: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: CLIENT -> 2: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: REPLICA -> 1: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: CLIENT -> 3: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: REPLICA -> 1: {"type":"REQUEST","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"PRE-PREPARE","view-number":1,"seq-number":0,"digest":"","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: REPLICA -> 2: {"type":"PRE-PREPARE","view-number":1,"seq-number":0,"digest":"","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: REPLICA -> 3: {"type":"PRE-PREPARE","view-number":1,"seq-number":0,"digest":"","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"PREPARE","view-number":1,"seq-number":0,"digest":"","replica-id":2}
-SEND: REPLICA -> 1: {"type":"PREPARE","view-number":1,"seq-number":0,"digest":"","replica-id":2}
-SEND: REPLICA -> 0: {"type":"PREPARE","view-number":1,"seq-number":0,"digest":"","replica-id":3}
-SEND: REPLICA -> 1: {"type":"PREPARE","view-number":1,"seq-number":0,"digest":"","replica-id":3}
-SEND: REPLICA -> 3: {"type":"PREPARE","view-number":1,"seq-number":0,"digest":"","replica-id":2}
-SEND: REPLICA -> 2: {"type":"PREPARE","view-number":1,"seq-number":0,"digest":"","replica-id":3}
-SEND: REPLICA -> 0: {"type":"PRE-PREPARE","view-number":1,"seq-number":1,"digest":"","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: REPLICA -> 2: {"type":"PRE-PREPARE","view-number":1,"seq-number":1,"digest":"","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: REPLICA -> 3: {"type":"PRE-PREPARE","view-number":1,"seq-number":1,"digest":"","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":0,"digest":"","replica-id":2}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":0,"digest":"","replica-id":3}
-SEND: CLIENT -> 0: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: CLIENT -> 1: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 1: {"type":"COMMIT","view-number":1,"seq-number":0,"digest":"","replica-id":2}
-SEND: CLIENT -> 2: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 1: {"type":"COMMIT","view-number":1,"seq-number":0,"digest":"","replica-id":3}
-SEND: REPLICA -> 3: {"type":"COMMIT","view-number":1,"seq-number":0,"digest":"","replica-id":2}
-SEND: REPLICA -> 0: {"type":"PRE-PREPARE","view-number":1,"seq-number":2,"digest":"","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"PREPARE","view-number":1,"seq-number":1,"digest":"","replica-id":2}
-SEND: REPLICA -> 2: {"type":"COMMIT","view-number":1,"seq-number":0,"digest":"","replica-id":3}
-SEND: REPLICA -> 1: {"type":"PREPARE","view-number":1,"seq-number":1,"digest":"","replica-id":2}
-SEND: CLIENT -> 3: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 3: {"type":"PREPARE","view-number":1,"seq-number":1,"digest":"","replica-id":2}
-SEND: REPLICA -> 0: {"type":"PREPARE","view-number":1,"seq-number":1,"digest":"","replica-id":3}
-SEND: CLIENT -> 0: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 1: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 1: {"type":"PREPARE","view-number":1,"seq-number":1,"digest":"","replica-id":3}
-SEND: CLIENT -> 1: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: CLIENT -> 2: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: CLIENT -> 3: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 2: {"type":"PREPARE","view-number":1,"seq-number":1,"digest":"","replica-id":3}
-SEND: REPLICA -> 1: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":1,"digest":"","replica-id":2}
-SEND: REPLICA -> 2: {"type":"PRE-PREPARE","view-number":1,"seq-number":2,"digest":"","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: REPLICA -> 1: {"type":"REQUEST","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 1: {"type":"COMMIT","view-number":1,"seq-number":1,"digest":"","replica-id":2}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":1,"digest":"","replica-id":3}
-SEND: REPLICA -> 3: {"type":"COMMIT","view-number":1,"seq-number":1,"digest":"","replica-id":2}
-SEND: REPLICA -> 1: {"type":"COMMIT","view-number":1,"seq-number":1,"digest":"","replica-id":3}
-SEND: REPLICA -> 3: {"type":"PRE-PREPARE","view-number":1,"seq-number":2,"digest":"","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"}
-SEND: REPLICA -> 2: {"type":"COMMIT","view-number":1,"seq-number":1,"digest":"","replica-id":3}
-SEND: REPLICA -> 0: {"type":"PREPARE","view-number":1,"seq-number":2,"digest":"","replica-id":2}
-SEND: REPLICA -> 1: {"type":"PREPARE","view-number":1,"seq-number":2,"digest":"","replica-id":2}
-SEND: REPLICA -> 1: {"type":"REQUEST","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 3: {"type":"PREPARE","view-number":1,"seq-number":2,"digest":"","replica-id":2}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":0,"digest":"","replica-id":1}
-SEND: REPLICA -> 0: {"type":"PREPARE","view-number":1,"seq-number":2,"digest":"","replica-id":3}
-SEND: REPLICA -> 2: {"type":"COMMIT","view-number":1,"seq-number":0,"digest":"","replica-id":1}
-SEND: REPLICA -> 1: {"type":"PREPARE","view-number":1,"seq-number":2,"digest":"","replica-id":3}
-SEND: REPLICA -> 2: {"type":"PREPARE","view-number":1,"seq-number":2,"digest":"","replica-id":3}
-SEND: REPLICA -> 3: {"type":"COMMIT","view-number":1,"seq-number":0,"digest":"","replica-id":1}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":2,"digest":"","replica-id":3}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":0,"client-id":"client-0","replica-id":2,"result":2}
-SEND: REPLICA -> 0: {"type":"PRE-PREPARE","view-number":1,"seq-number":3,"digest":"","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 1: {"type":"COMMIT","view-number":1,"seq-number":2,"digest":"","replica-id":3}
-SEND: REPLICA -> 2: {"type":"PRE-PREPARE","view-number":1,"seq-number":3,"digest":"","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 2: {"type":"COMMIT","view-number":1,"seq-number":2,"digest":"","replica-id":3}
-SEND: REPLICA -> 3: {"type":"PRE-PREPARE","view-number":1,"seq-number":3,"digest":"","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"CHECKPOINT","last-seq-number":0,"digest":"","replica-id":2}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":0,"client-id":"client-0","replica-id":3,"result":2}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":0,"client-id":"client-0","replica-id":1,"result":2}
-==========================
-==========================
+faultInjector = new FaultInjector(conf);
+```
+
+Here is an example output of a randomly generated test execution:
+
+```
+Random test generation using the configuration in test.conf
+Test inputs: d = 1, c = 1, r = 8
+Network and process faults are generated by using random seed: 12345151
+{"byzantineReplicaId":3,"networkFaults":[{"round":4,"partition":[[3],[1,2],[0]]}],"msgCorruptions":[{"round":6,"receivers":[0,1],"corruptionType":428240996}],"smallScope":true}
+
+Sent: 0 -> 1 {"type":"PRE-PREPARE","view-number":0,"seq-number":0,"digest":"","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"} ##1
+Sent: 0 -> 2 {"type":"PRE-PREPARE","view-number":0,"seq-number":0,"digest":"","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"} ##1
+Sent: 0 -> 3 {"type":"PRE-PREPARE","view-number":0,"seq-number":0,"digest":"","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"} ##1
+Sent: 3 -> 0 {"type":"PREPARE","view-number":0,"seq-number":0,"digest":"","replica-id":3} ##2
+Sent: 3 -> 1 {"type":"PREPARE","view-number":0,"seq-number":0,"digest":"","replica-id":3} ##2
+Sent: 3 -> 2 {"type":"PREPARE","view-number":0,"seq-number":0,"digest":"","replica-id":3} ##2
+Sent: 2 -> 0 {"type":"PREPARE","view-number":0,"seq-number":0,"digest":"","replica-id":2} ##2
+Sent: 2 -> 1 {"type":"PREPARE","view-number":0,"seq-number":0,"digest":"","replica-id":2} ##2
+Sent: 2 -> 3 {"type":"PREPARE","view-number":0,"seq-number":0,"digest":"","replica-id":2} ##2
+Sent: 1 -> 0 {"type":"PREPARE","view-number":0,"seq-number":0,"digest":"","replica-id":1} ##2
+Sent: 1 -> 2 {"type":"PREPARE","view-number":0,"seq-number":0,"digest":"","replica-id":1} ##2
+Sent: 1 -> 3 {"type":"PREPARE","view-number":0,"seq-number":0,"digest":"","replica-id":1} ##2
+Sent: 2 -> 0 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":2} ##3
+Sent: 2 -> 1 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":2} ##3
+Sent: 2 -> 3 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":2} ##3
+Sent: 3 -> 0 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":3} ##3
+Sent: 3 -> 1 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":3} ##3
+Sent: 3 -> 2 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":3} ##3
+Sent: 0 -> 1 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":0} ##3
+Sent: 0 -> 2 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":0} ##3
+Sent: 0 -> 3 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":0} ##3
+Sent reply: 2 -> Client {"type":"REPLY","view-number":0,"timestamp":0,"client-id":"client-0","replica-id":2,"result":2} ##4
+Sent reply: 3 -> Client {"type":"REPLY","view-number":0,"timestamp":0,"client-id":"client-0","replica-id":3,"result":2} ##4
+Sent: 1 -> 0 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":1} ##3
+Sent: 1 -> 2 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":1} ##3
+Sent: 1 -> 3 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":1} ##3
+LOG-Replica-Commit:3 	viewNo: 0 	seqNo: 0 	request: DRRequest{operation=AddOp{first=1, second=1}, timestamp=0, clientId='client-0'}
+LOG-Replica-Commit:2 	viewNo: 0 	seqNo: 0 	request: DRRequest{operation=AddOp{first=1, second=1}, timestamp=0, clientId='client-0'}
+Sent reply: 0 -> Client {"type":"REPLY","view-number":0,"timestamp":0,"client-id":"client-0","replica-id":0,"result":2} ##4
+LOG-Replica-Commit:0 	viewNo: 0 	seqNo: 0 	request: DRRequest{operation=AddOp{first=1, second=1}, timestamp=0, clientId='client-0'}
+=========== COMPLETED ===============
 1 + 1 = 2
 ==========================
-==========================
-SEND: REPLICA -> 1: {"type":"CHECKPOINT","last-seq-number":0,"digest":"","replica-id":2}
-SEND: REPLICA -> 0: {"type":"CHECKPOINT","last-seq-number":0,"digest":"","replica-id":1}
-SEND: REPLICA -> 2: {"type":"CHECKPOINT","last-seq-number":0,"digest":"","replica-id":1}
-SEND: REPLICA -> 3: {"type":"CHECKPOINT","last-seq-number":0,"digest":"","replica-id":2}
-SEND: REPLICA -> 3: {"type":"CHECKPOINT","last-seq-number":0,"digest":"","replica-id":1}
-SEND: REPLICA -> 0: {"type":"CHECKPOINT","last-seq-number":0,"digest":"","replica-id":3}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":1,"digest":"","replica-id":1}
-SEND: REPLICA -> 2: {"type":"COMMIT","view-number":1,"seq-number":1,"digest":"","replica-id":1}
-SEND: REPLICA -> 3: {"type":"COMMIT","view-number":1,"seq-number":1,"digest":"","replica-id":1}
-SEND: REPLICA -> 1: {"type":"CHECKPOINT","last-seq-number":0,"digest":"","replica-id":3}
-SEND: REPLICA -> 0: {"type":"PRE-PREPARE","view-number":1,"seq-number":4,"digest":"","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 2: {"type":"CHECKPOINT","last-seq-number":0,"digest":"","replica-id":3}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":2,"digest":"","replica-id":2}
-SEND: REPLICA -> 2: {"type":"PRE-PREPARE","view-number":1,"seq-number":4,"digest":"","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 1: {"type":"COMMIT","view-number":1,"seq-number":2,"digest":"","replica-id":2}
-SEND: REPLICA -> 3: {"type":"PRE-PREPARE","view-number":1,"seq-number":4,"digest":"","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 3: {"type":"COMMIT","view-number":1,"seq-number":2,"digest":"","replica-id":2}
-SEND: REPLICA -> 0: {"type":"PRE-PREPARE","view-number":1,"seq-number":5,"digest":"","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 2: {"type":"PRE-PREPARE","view-number":1,"seq-number":5,"digest":"","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"PREPARE","view-number":1,"seq-number":3,"digest":"","replica-id":3}
-SEND: REPLICA -> 0: {"type":"PREPARE","view-number":1,"seq-number":3,"digest":"","replica-id":2}
-SEND: REPLICA -> 1: {"type":"PREPARE","view-number":1,"seq-number":3,"digest":"","replica-id":3}
-SEND: REPLICA -> 1: {"type":"PREPARE","view-number":1,"seq-number":3,"digest":"","replica-id":2}
-SEND: REPLICA -> 3: {"type":"PRE-PREPARE","view-number":1,"seq-number":5,"digest":"","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 2: {"type":"PREPARE","view-number":1,"seq-number":3,"digest":"","replica-id":3}
-SEND: REPLICA -> 3: {"type":"PREPARE","view-number":1,"seq-number":3,"digest":"","replica-id":2}
-SEND: REPLICA -> 0: {"type":"PRE-PREPARE","view-number":1,"seq-number":6,"digest":"","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 2: {"type":"PRE-PREPARE","view-number":1,"seq-number":6,"digest":"","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":0,"client-id":"client-0","replica-id":2,"result":2}
-SEND: REPLICA -> 3: {"type":"PRE-PREPARE","view-number":1,"seq-number":6,"digest":"","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":0,"client-id":"client-0","replica-id":3,"result":2}
-SEND: REPLICA -> 0: {"type":"PREPARE","view-number":1,"seq-number":4,"digest":"","replica-id":2}
-SEND: REPLICA -> 0: {"type":"PRE-PREPARE","view-number":1,"seq-number":7,"digest":"","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 0: {"type":"PREPARE","view-number":1,"seq-number":4,"digest":"","replica-id":3}
-SEND: REPLICA -> 1: {"type":"PREPARE","view-number":1,"seq-number":4,"digest":"","replica-id":2}
-SEND: REPLICA -> 2: {"type":"PRE-PREPARE","view-number":1,"seq-number":7,"digest":"","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 3: {"type":"PREPARE","view-number":1,"seq-number":4,"digest":"","replica-id":2}
-SEND: REPLICA -> 0: {"type":"PREPARE","view-number":1,"seq-number":5,"digest":"","replica-id":2}
-SEND: REPLICA -> 1: {"type":"PREPARE","view-number":1,"seq-number":5,"digest":"","replica-id":2}
-SEND: REPLICA -> 3: {"type":"PREPARE","view-number":1,"seq-number":5,"digest":"","replica-id":2}
-SEND: REPLICA -> 1: {"type":"PREPARE","view-number":1,"seq-number":4,"digest":"","replica-id":3}
-SEND: REPLICA -> 3: {"type":"PRE-PREPARE","view-number":1,"seq-number":7,"digest":"","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"}
-SEND: REPLICA -> 2: {"type":"PREPARE","view-number":1,"seq-number":4,"digest":"","replica-id":3}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":3,"digest":"","replica-id":2}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":0,"client-id":"client-0","replica-id":1,"result":2}
-SEND: REPLICA -> 0: {"type":"PREPARE","view-number":1,"seq-number":5,"digest":"","replica-id":3}
-SEND: REPLICA -> 1: {"type":"PREPARE","view-number":1,"seq-number":5,"digest":"","replica-id":3}
-SEND: REPLICA -> 2: {"type":"PREPARE","view-number":1,"seq-number":5,"digest":"","replica-id":3}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":3,"digest":"","replica-id":3}
-SEND: REPLICA -> 0: {"type":"PRE-PREPARE","view-number":1,"seq-number":8,"digest":"","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 1: {"type":"COMMIT","view-number":1,"seq-number":3,"digest":"","replica-id":3}
-SEND: REPLICA -> 2: {"type":"PRE-PREPARE","view-number":1,"seq-number":8,"digest":"","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 2: {"type":"COMMIT","view-number":1,"seq-number":3,"digest":"","replica-id":3}
-SEND: REPLICA -> 1: {"type":"COMMIT","view-number":1,"seq-number":3,"digest":"","replica-id":2}
-SEND: REPLICA -> 0: {"type":"PREPARE","view-number":1,"seq-number":6,"digest":"","replica-id":3}
-SEND: REPLICA -> 1: {"type":"PREPARE","view-number":1,"seq-number":6,"digest":"","replica-id":3}
-SEND: REPLICA -> 2: {"type":"PREPARE","view-number":1,"seq-number":6,"digest":"","replica-id":3}
-SEND: REPLICA -> 3: {"type":"COMMIT","view-number":1,"seq-number":3,"digest":"","replica-id":2}
-SEND: REPLICA -> 0: {"type":"PREPARE","view-number":1,"seq-number":6,"digest":"","replica-id":2}
-SEND: REPLICA -> 1: {"type":"PREPARE","view-number":1,"seq-number":6,"digest":"","replica-id":2}
-SEND: REPLICA -> 3: {"type":"PREPARE","view-number":1,"seq-number":6,"digest":"","replica-id":2}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":4,"digest":"","replica-id":3}
-SEND: REPLICA -> 3: {"type":"PRE-PREPARE","view-number":1,"seq-number":8,"digest":"","operation":{"first":3,"second":3},"timestamp":2,"client":"client-0"}
-SEND: REPLICA -> 1: {"type":"COMMIT","view-number":1,"seq-number":4,"digest":"","replica-id":3}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":2,"digest":"","replica-id":1}
-SEND: REPLICA -> 2: {"type":"COMMIT","view-number":1,"seq-number":4,"digest":"","replica-id":3}
-SEND: REPLICA -> 2: {"type":"COMMIT","view-number":1,"seq-number":2,"digest":"","replica-id":1}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":5,"digest":"","replica-id":3}
-SEND: REPLICA -> 3: {"type":"COMMIT","view-number":1,"seq-number":2,"digest":"","replica-id":1}
-SEND: REPLICA -> 1: {"type":"COMMIT","view-number":1,"seq-number":5,"digest":"","replica-id":3}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":0,"client-id":"client-0","replica-id":1,"result":2}
-SEND: REPLICA -> 2: {"type":"COMMIT","view-number":1,"seq-number":5,"digest":"","replica-id":3}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":3,"digest":"","replica-id":1}
-SEND: REPLICA -> 0: {"type":"PREPARE","view-number":1,"seq-number":7,"digest":"","replica-id":3}
-SEND: REPLICA -> 2: {"type":"COMMIT","view-number":1,"seq-number":3,"digest":"","replica-id":1}
-SEND: REPLICA -> 1: {"type":"PREPARE","view-number":1,"seq-number":7,"digest":"","replica-id":3}
-SEND: REPLICA -> 0: {"type":"PREPARE","view-number":1,"seq-number":7,"digest":"","replica-id":2}
-SEND: REPLICA -> 1: {"type":"PREPARE","view-number":1,"seq-number":7,"digest":"","replica-id":2}
-SEND: REPLICA -> 2: {"type":"PREPARE","view-number":1,"seq-number":7,"digest":"","replica-id":3}
-SEND: REPLICA -> 3: {"type":"COMMIT","view-number":1,"seq-number":3,"digest":"","replica-id":1}
-SEND: REPLICA -> 3: {"type":"PREPARE","view-number":1,"seq-number":7,"digest":"","replica-id":2}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":4,"digest":"","replica-id":2}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":6,"digest":"","replica-id":3}
-SEND: REPLICA -> 1: {"type":"COMMIT","view-number":1,"seq-number":4,"digest":"","replica-id":2}
-SEND: REPLICA -> 3: {"type":"COMMIT","view-number":1,"seq-number":4,"digest":"","replica-id":2}
-SEND: REPLICA -> 1: {"type":"COMMIT","view-number":1,"seq-number":6,"digest":"","replica-id":3}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":5,"digest":"","replica-id":2}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":4,"digest":"","replica-id":1}
-SEND: REPLICA -> 2: {"type":"COMMIT","view-number":1,"seq-number":6,"digest":"","replica-id":3}
-SEND: REPLICA -> 1: {"type":"COMMIT","view-number":1,"seq-number":5,"digest":"","replica-id":2}
-SEND: REPLICA -> 2: {"type":"COMMIT","view-number":1,"seq-number":4,"digest":"","replica-id":1}
-SEND: REPLICA -> 0: {"type":"PREPARE","view-number":1,"seq-number":8,"digest":"","replica-id":3}
-SEND: REPLICA -> 3: {"type":"COMMIT","view-number":1,"seq-number":5,"digest":"","replica-id":2}
-SEND: REPLICA -> 3: {"type":"COMMIT","view-number":1,"seq-number":4,"digest":"","replica-id":1}
-SEND: REPLICA -> 1: {"type":"PREPARE","view-number":1,"seq-number":8,"digest":"","replica-id":3}
-SEND: REPLICA -> 0: {"type":"PREPARE","view-number":1,"seq-number":8,"digest":"","replica-id":2}
-SEND: REPLICA -> 1: {"type":"PREPARE","view-number":1,"seq-number":8,"digest":"","replica-id":2}
-SEND: REPLICA -> 2: {"type":"PREPARE","view-number":1,"seq-number":8,"digest":"","replica-id":3}
-SEND: REPLICA -> 3: {"type":"PREPARE","view-number":1,"seq-number":8,"digest":"","replica-id":2}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":0,"client-id":"client-0","replica-id":3,"result":2}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":6,"digest":"","replica-id":2}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":5,"digest":"","replica-id":1}
-SEND: REPLICA -> 1: {"type":"COMMIT","view-number":1,"seq-number":6,"digest":"","replica-id":2}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":1,"client-id":"client-0","replica-id":3,"result":4}
-SEND: REPLICA -> 2: {"type":"COMMIT","view-number":1,"seq-number":5,"digest":"","replica-id":1}
-SEND: REPLICA -> 3: {"type":"COMMIT","view-number":1,"seq-number":6,"digest":"","replica-id":2}
-SEND: REPLICA -> 3: {"type":"COMMIT","view-number":1,"seq-number":5,"digest":"","replica-id":1}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":0,"client-id":"client-0","replica-id":2,"result":2}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":7,"digest":"","replica-id":3}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":1,"client-id":"client-0","replica-id":1,"result":4}
-SEND: REPLICA -> 1: {"type":"COMMIT","view-number":1,"seq-number":7,"digest":"","replica-id":3}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":1,"client-id":"client-0","replica-id":2,"result":4}
-==========================
-==========================
+Sent reply: 1 -> Client {"type":"REPLY","view-number":0,"timestamp":0,"client-id":"client-0","replica-id":1,"result":2} ##4
+LOG-Replica-Commit:1 	viewNo: 0 	seqNo: 0 	request: DRRequest{operation=AddOp{first=1, second=1}, timestamp=0, clientId='client-0'}
+Sent: 0 -> 1 {"type":"PRE-PREPARE","view-number":0,"seq-number":1,"digest":"","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"} ##5
+Sent: 0 -> 2 {"type":"PRE-PREPARE","view-number":0,"seq-number":1,"digest":"","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"} ##5
+Sent: 0 -> 3 {"type":"PRE-PREPARE","view-number":0,"seq-number":1,"digest":"","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"} ##5
+Sent: 3 -> 0 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":3} ##6
+     - Omitted: 3 -> 0{"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":3} #6
+Sent: 3 -> 1 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":3} ##6
+     - Omitted: 3 -> 1{"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":3} #6
+Sent: 3 -> 2 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":3} ##6
+Sent: 2 -> 0 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":2} ##6
+Sent: 2 -> 1 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":2} ##6
+Sent: 2 -> 3 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":2} ##6
+Sent: 1 -> 0 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":1} ##6
+Sent: 1 -> 2 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":1} ##6
+Sent: 1 -> 3 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":1} ##6
+Sent: 0 -> 1 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":0} ##7
+Sent: 0 -> 2 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":0} ##7
+Sent: 0 -> 3 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":0} ##7
+Sent: 2 -> 0 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":2} ##7
+Sent: 2 -> 1 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":2} ##7
+Sent: 2 -> 3 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":2} ##7
+Sent: 3 -> 0 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":3} ##7
+Sent: 3 -> 1 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":3} ##7
+Sent: 3 -> 2 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":3} ##7
+Sent reply: 2 -> Client {"type":"REPLY","view-number":0,"timestamp":1,"client-id":"client-0","replica-id":2,"result":4} ##8
+LOG-Replica-Commit:2 	viewNo: 0 	seqNo: 1 	request: DRRequest{operation=AddOp{first=2, second=2}, timestamp=1, clientId='client-0'}
+Sent reply: 0 -> Client {"type":"REPLY","view-number":0,"timestamp":1,"client-id":"client-0","replica-id":0,"result":4} ##8
+LOG-Replica-Commit:0 	viewNo: 0 	seqNo: 1 	request: DRRequest{operation=AddOp{first=2, second=2}, timestamp=1, clientId='client-0'}
+Sent: 1 -> 0 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":1} ##7
+Sent: 1 -> 2 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":1} ##7
+Sent: 1 -> 3 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":1} ##7
+Sent reply: 3 -> Client {"type":"REPLY","view-number":0,"timestamp":1,"client-id":"client-0","replica-id":3,"result":4} ##8
+=========== COMPLETED ===============
 2 + 2 = 4
 ==========================
-==========================
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":7,"digest":"","replica-id":2}
-SEND: REPLICA -> 1: {"type":"COMMIT","view-number":1,"seq-number":7,"digest":"","replica-id":2}
-SEND: REPLICA -> 2: {"type":"COMMIT","view-number":1,"seq-number":7,"digest":"","replica-id":3}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":6,"digest":"","replica-id":1}
-SEND: REPLICA -> 3: {"type":"COMMIT","view-number":1,"seq-number":7,"digest":"","replica-id":2}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":2,"client-id":"client-0","replica-id":3,"result":6}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":2,"client-id":"client-0","replica-id":2,"result":6}
-==========================
-==========================
-3 + 3 = 6
-==========================
-==========================
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":8,"digest":"","replica-id":2}
-SEND: REPLICA -> 1: {"type":"COMMIT","view-number":1,"seq-number":8,"digest":"","replica-id":2}
-SEND: REPLICA -> 3: {"type":"COMMIT","view-number":1,"seq-number":8,"digest":"","replica-id":2}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":1,"client-id":"client-0","replica-id":2,"result":4}
-SEND: REPLICA -> 2: {"type":"COMMIT","view-number":1,"seq-number":6,"digest":"","replica-id":1}
-SEND: REPLICA -> 3: {"type":"COMMIT","view-number":1,"seq-number":6,"digest":"","replica-id":1}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":2,"client-id":"client-0","replica-id":2,"result":6}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":7,"digest":"","replica-id":1}
-SEND: REPLICA -> 2: {"type":"COMMIT","view-number":1,"seq-number":7,"digest":"","replica-id":1}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":8,"digest":"","replica-id":3}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":1,"client-id":"client-0","replica-id":2,"result":4}
-SEND: REPLICA -> 3: {"type":"COMMIT","view-number":1,"seq-number":7,"digest":"","replica-id":1}
-SEND: REPLICA -> 1: {"type":"COMMIT","view-number":1,"seq-number":8,"digest":"","replica-id":3}
-SEND: REPLICA -> 2: {"type":"COMMIT","view-number":1,"seq-number":8,"digest":"","replica-id":3}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":2,"client-id":"client-0","replica-id":1,"result":6}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":1,"client-id":"client-0","replica-id":1,"result":4}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":1,"client-id":"client-0","replica-id":3,"result":4}
-SEND: REPLICA -> 0: {"type":"COMMIT","view-number":1,"seq-number":8,"digest":"","replica-id":1}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":2,"client-id":"client-0","replica-id":3,"result":6}
-SEND: REPLICA -> 2: {"type":"COMMIT","view-number":1,"seq-number":8,"digest":"","replica-id":1}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":1,"client-id":"client-0","replica-id":3,"result":4}
-SEND: REPLICA -> 3: {"type":"COMMIT","view-number":1,"seq-number":8,"digest":"","replica-id":1}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":2,"client-id":"client-0","replica-id":2,"result":6}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":2,"client-id":"client-0","replica-id":1,"result":6}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":2,"client-id":"client-0","replica-id":3,"result":6}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":1,"client-id":"client-0","replica-id":1,"result":4}
-SEND: REPLY -> client-0: {"type":"REPLY","view-number":1,"timestamp":2,"client-id":"client-0","replica-id":1,"result":6}
+Sent reply: 1 -> Client {"type":"REPLY","view-number":0,"timestamp":1,"client-id":"client-0","replica-id":1,"result":4} ##8
+LOG-Replica-Commit:3 	viewNo: 0 	seqNo: 1 	request: DRRequest{operation=AddOp{first=2, second=2}, timestamp=1, clientId='client-0'}
+LOG-Replica-Commit:1 	viewNo: 0 	seqNo: 1 	request: DRRequest{operation=AddOp{first=2, second=2}, timestamp=1, clientId='client-0'}
+Task completed.
 ```
 
-# Credits
 
-Built with [IntelliJ IDEA](https://www.jetbrains.com/idea/)
+### Running an example test execution from a given fault configuration:
 
-Uses [GSON](https://github.com/google/gson) and [Jedis](https://github.com/xetorthio/jedis)
+To run an execution with a specific fault configuration, initialize the fault injector in the `TesterTransport` using json string for the fault configuration. For an example, uncomment the lines 41-42 in [TesterTransport.java](example/src/main/java/edu/tudelft/serg/TesterTransport.java):
 
-# References
+```
+FaultSetting faultSetting = FaultSetting.readJson(detectsAgreementViolation);
+faultInjector = new FaultInjector(faultSetting);
+```
 
-  - [Practical Byzantine Fault Tolerance](http://pmg.csail.mit.edu/papers/osdi99.pdf)
-  - [Practical BFT](https://courses.cs.washington.edu/courses/csep552/13sp/lectures/10/pbft.pdf)
-  - [Practical Byzantine Fault Tolerance](http://www.scs.stanford.edu/14au-cs244b/notes/pbft.txt)
-  - [Distributed Algorithms Practical Byzantine Fault Tolerance](https://disi.unitn.it/~montreso/ds/handouts17/10-pbft.pdf)
-  - [PBFT Presentation](https://courses.cs.vt.edu/~cs5204/fall05-gback/presentations/PBFT.pdf)
-  - [Practical Byzantine Fault Tolerance](https://www.microsoft.com/en-us/research/wp-content/uploads/2017/01/thesis-mcastro.pdf)
-  - [10.BFT](https://www.cs.utexas.edu/~lorenzo/corsi/cs380d/past/10S/notes/week11.pdf)
-  - [Byzantine Fault Tolerance](http://www.cs.cmu.edu/~srini/15-440-all/2016.Fall/lectures/22-BFT.ppt)
-  - [Practical Byzantine Fault Tolerance ](https://people.eecs.berkeley.edu/~kubitron/courses/cs294-4-F03/slides/lec09-practical.ppt)
+Here is an example output of running a given fault configuration:
+
+```
+Test generation using the given fault setting.
+{"byzantineReplicaId":0,"networkFaults":[],"msgCorruptions":[{"round":1,"receivers":[3],"corruptionType":6}],"smallScope":true}
+
+Sent: 0 -> 1 {"type":"PRE-PREPARE","view-number":0,"seq-number":0,"digest":"","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"} ##1
+Sent: 0 -> 2 {"type":"PRE-PREPARE","view-number":0,"seq-number":0,"digest":"","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"} ##1
+Sent: 0 -> 3 {"type":"PRE-PREPARE","view-number":0,"seq-number":0,"digest":"","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"} ##1
+     - Mutated: 0 -> 3{"type":"PRE-PREPARE","view-number":0,"seq-number":1,"digest":"","operation":{"first":1,"second":1},"timestamp":0,"client":"client-0"} #1
+Sent: 3 -> 0 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":3} ##6
+Sent: 3 -> 1 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":3} ##6
+Sent: 3 -> 2 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":3} ##6
+Sent: 2 -> 0 {"type":"PREPARE","view-number":0,"seq-number":0,"digest":"","replica-id":2} ##6
+Sent: 2 -> 1 {"type":"PREPARE","view-number":0,"seq-number":0,"digest":"","replica-id":2} ##6
+Sent: 2 -> 3 {"type":"PREPARE","view-number":0,"seq-number":0,"digest":"","replica-id":2} ##6
+Sent: 1 -> 0 {"type":"PREPARE","view-number":0,"seq-number":0,"digest":"","replica-id":1} ##6
+Sent: 1 -> 2 {"type":"PREPARE","view-number":0,"seq-number":0,"digest":"","replica-id":1} ##6
+Sent: 1 -> 3 {"type":"PREPARE","view-number":0,"seq-number":0,"digest":"","replica-id":1} ##6
+Sent: 2 -> 0 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":2} ##6
+Sent: 2 -> 1 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":2} ##6
+Sent: 2 -> 3 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":2} ##6
+Sent: 0 -> 1 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":0} ##6
+Sent: 0 -> 2 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":0} ##6
+Sent: 0 -> 3 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":0} ##6
+Sent: 1 -> 0 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":1} ##6
+Sent: 1 -> 2 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":1} ##6
+Sent: 1 -> 3 {"type":"COMMIT","view-number":0,"seq-number":0,"digest":"","replica-id":1} ##6
+Sent reply: 0 -> Client {"type":"REPLY","view-number":0,"timestamp":0,"client-id":"client-0","replica-id":0,"result":2} ##7
+Sent reply: 2 -> Client {"type":"REPLY","view-number":0,"timestamp":0,"client-id":"client-0","replica-id":2,"result":2} ##7
+Sent reply: 1 -> Client {"type":"REPLY","view-number":0,"timestamp":0,"client-id":"client-0","replica-id":1,"result":2} ##7
+=========== COMPLETED ===============
+1 + 1 = 2
+==========================
+LOG-Replica-Commit:0 	viewNo: 0 	seqNo: 0 	request: DRRequest{operation=AddOp{first=1, second=1}, timestamp=0, clientId='client-0'}
+LOG-Replica-Commit:1 	viewNo: 0 	seqNo: 0 	request: DRRequest{operation=AddOp{first=1, second=1}, timestamp=0, clientId='client-0'}
+LOG-Replica-Commit:2 	viewNo: 0 	seqNo: 0 	request: DRRequest{operation=AddOp{first=1, second=1}, timestamp=0, clientId='client-0'}
+Sent: 0 -> 1 {"type":"PRE-PREPARE","view-number":0,"seq-number":1,"digest":"","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"} ##7
+Sent: 0 -> 2 {"type":"PRE-PREPARE","view-number":0,"seq-number":1,"digest":"","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"} ##7
+Sent: 0 -> 3 {"type":"PRE-PREPARE","view-number":0,"seq-number":1,"digest":"","operation":{"first":2,"second":2},"timestamp":1,"client":"client-0"} ##7
+Sent: 3 -> 0 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":3} ##6
+Sent: 3 -> 1 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":3} ##6
+Sent: 3 -> 2 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":3} ##6
+Sent: 2 -> 0 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":2} ##7
+Sent: 2 -> 1 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":2} ##7
+Sent: 2 -> 3 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":2} ##7
+Sent: 1 -> 0 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":1} ##7
+Sent: 1 -> 2 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":1} ##7
+Sent: 1 -> 3 {"type":"PREPARE","view-number":0,"seq-number":1,"digest":"","replica-id":1} ##7
+Sent: 2 -> 0 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":2} ##7
+Sent: 2 -> 1 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":2} ##7
+Sent: 2 -> 3 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":2} ##7
+Sent: 3 -> 0 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":3} ##7
+Sent: 3 -> 1 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":3} ##7
+Sent: 3 -> 2 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":3} ##7
+Sent: 0 -> 1 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":0} ##7
+Sent: 0 -> 2 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":0} ##7
+Sent: 0 -> 3 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":0} ##7
+Sent reply: 3 -> Client {"type":"REPLY","view-number":0,"timestamp":0,"client-id":"client-0","replica-id":3,"result":2} ##8
+Sent reply: 2 -> Client {"type":"REPLY","view-number":0,"timestamp":1,"client-id":"client-0","replica-id":2,"result":4} ##8
+LOG-Replica-Commit:3 	viewNo: 0 	seqNo: 1 	request: DRRequest{operation=AddOp{first=1, second=1}, timestamp=0, clientId='client-0'}
+LOG-Replica-Commit:2 	viewNo: 0 	seqNo: 1 	request: DRRequest{operation=AddOp{first=2, second=2}, timestamp=1, clientId='client-0'}
+Sent: 1 -> 0 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":1} ##7
+Sent: 1 -> 2 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":1} ##7
+Sent: 1 -> 3 {"type":"COMMIT","view-number":0,"seq-number":1,"digest":"","replica-id":1} ##7
+Violation of AGREEMENT at Replica: 2 at: LOG-Replica-Commit:2 	viewNo: 0 	seqNo: 1 	request: DRRequest{operation=AddOp{first=2, second=2}, timestamp=1, clientId='client-0'}
+Sent reply: 0 -> Client {"type":"REPLY","view-number":0,"timestamp":1,"client-id":"client-0","replica-id":0,"result":4} ##8
+LOG-Replica-Commit:0 	viewNo: 0 	seqNo: 1 	request: DRRequest{operation=AddOp{first=2, second=2}, timestamp=1, clientId='client-0'}
+Sent reply: 1 -> Client {"type":"REPLY","view-number":0,"timestamp":1,"client-id":"client-0","replica-id":1,"result":4} ##8
+LOG-Replica-Commit:1 	viewNo: 0 	seqNo: 1 	request: DRRequest{operation=AddOp{first=2, second=2}, timestamp=1, clientId='client-0'}
+=========== COMPLETED ===============
+2 + 2 = 4
+==========================
+Violation of AGREEMENT at Replica: 1 at: LOG-Replica-Commit:1 	viewNo: 0 	seqNo: 1 	request: DRRequest{operation=AddOp{first=2, second=2}, timestamp=1, clientId='client-0'}
+Task completed.
+```
+
+The execution violates agreement since the logs of the correct processes (or replicas) for issuing the client request `DRRequest{operation=AddOp{first=2, second=2}` diverge. The correct processes 1 and 2 issue the operation at `timestamp:1` while the process 3 issues it in `timestamp:0`, for which it could not complete processing the request due to the incorrect message sent by the Byzantine process p0.
+
+
+
+## Additional Notes:
+
+The repository will be made available with a more comprehensive list of instructions to run and reuse the artifact.

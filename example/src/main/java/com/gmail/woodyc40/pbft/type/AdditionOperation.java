@@ -16,4 +16,12 @@ public class AdditionOperation {
     public int second() {
         return this.second;
     }
+
+    @Override
+    public String toString() {
+        return "AddOp{" +
+                "first=" + first +
+                ", second=" + second +
+                '}';
+    }
 }

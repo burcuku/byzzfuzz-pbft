@@ -27,4 +27,13 @@ public class DefaultReplicaRequest<O> implements ReplicaRequest<O> {
     public String clientId() {
         return this.clientId;
     }
+
+    @Override
+    public String toString() {
+        return "DRRequest{" +
+                "operation=" + operation +
+                ", timestamp=" + timestamp +
+                ", clientId='" + clientId + '\'' +
+                '}';
+    }
 }

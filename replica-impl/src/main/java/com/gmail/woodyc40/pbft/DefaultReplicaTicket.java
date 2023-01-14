@@ -125,4 +125,16 @@ public class DefaultReplicaTicket<O, R> implements ReplicaTicket<O, R> {
     public CompletableFuture<R> result() {
         return this.future;
     }
+
+    @Override
+    public String toString() {
+        return "DRTicket{" +
+                "viewNumber=" + viewNumber +
+                ", seqNumber=" + seqNumber +
+                ", messages=" + messages +
+                ", request=" + request +
+                ", phase=" + phase +
+                ", future=" + future +
+                '}';
+    }
 }
